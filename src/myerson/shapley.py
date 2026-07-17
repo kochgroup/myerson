@@ -114,6 +114,21 @@ class ShapleyCalculator():
         """
         return self.coalition_function(self.grand_coalition, nx_graph)
 
+    def _precompute_prefactors(self, size_grand_coalition: int) -> list[float]:
+        """Precompute Shapley prefactors for each coalition size.
+
+        Args:
+            size_grand_coalition (int): Number of players.
+
+        Returns:
+            list[float]: Prefactor for coalition size s at index s.
+        """
+        n_fact = math.factorial(size_grand_coalition)
+        return [
+            math.factorial(s) * math.factorial(size_grand_coalition - s - 1) / n_fact
+            for s in range(size_grand_coalition)
+        ]
+
     def calculate_single_shapley_value(self, node: int, grand_coalition: tuple,
                                   coalitions: list[tuple], coalition_to_worth: dict) -> float:
         """Calculate a single Shapley value.
@@ -129,15 +144,14 @@ class ShapleyCalculator():
         """
         sh = 0
         size_grand_coalition = len(grand_coalition)
-        factorial_size_grand_coalition = math.factorial(size_grand_coalition)
-        for coalition in [S for S in coalitions if node not in S]:
+        prefactors = self._precompute_prefactors(size_grand_coalition)
+        for coalition in coalitions:
+            if node in coalition:
+                continue
             size_coalition = len(coalition)
-            prefactor = ((math.factorial(size_coalition)
-                         *math.factorial(size_grand_coalition-size_coalition-1))
-                         /factorial_size_grand_coalition)
             worth_of_coalition = coalition_to_worth[coalition]
             worth_of_coalition_with_node = coalition_to_worth[tuple(sorted(coalition+(node,)))]
-            sh += prefactor * (worth_of_coalition_with_node - worth_of_coalition)
+            sh += prefactors[size_coalition] * (worth_of_coalition_with_node - worth_of_coalition)
         return sh
 
     def calculate_all_shapley_values(self) -> np.ndarray:
@@ -375,18 +389,15 @@ class ShapleySampler(ShapleyCalculator):
         # TODO: look for potential improvement
         sh = 0
         size_grand_coalition = len(grand_coalition)
-        factorial_size_grand_coalition = math.factorial(size_grand_coalition)
-        for coalition in [S for S in coalitions if node not in S]:
+        prefactors = self._precompute_prefactors(size_grand_coalition)
+        for coalition in coalitions:
+            if node in coalition:
+                continue
             coalition_with_node = tuple(sorted(coalition+(node,)))
             if coalition_with_node in coalitions:
                 worth_of_coalition = coalition_to_worth[coalition]
                 worth_of_coalition_with_node = coalition_to_worth[coalition_with_node]
-
-                size_coalition = len(coalition)
-                prefactor = ((math.factorial(size_coalition)
-                            *math.factorial(size_grand_coalition-size_coalition-1))
-                            /factorial_size_grand_coalition)
-                sh += prefactor * (worth_of_coalition_with_node - worth_of_coalition)
+                sh += prefactors[len(coalition)] * (worth_of_coalition_with_node - worth_of_coalition)
         return sh
 
     def calculate_all_shapley_values_with_sampling(self) -> np.ndarray:

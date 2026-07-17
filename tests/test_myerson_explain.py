@@ -123,3 +123,69 @@ class TestMyersonSamplingClassExplainer:
         my_values = sampler.sample_all_myerson_values()
         for my, sol in zip(my_values, solution):
             assert np.allclose(my, sol, atol=0.01), f"{my_values=}, {solution=}"
+
+
+class TestBatchingEquivalence:
+    """The batched worth path (``_batch_data_from_coalitions`` +
+    ``calculate_worth_of_graph_restricted_coalitions``) and the single-subgraph
+    path (``subgraph_from_coalition`` +
+    ``calculate_worth_of_single_graph_restricted_coalition``) reimplement the same
+    masking/relabelling. These tests guard against the two code paths drifting.
+    """
+
+    @staticmethod
+    def _coalitions(n_nodes):
+        return [
+            (0,),
+            (n_nodes - 1,),
+            (0, 1),
+            (0, 2, 4),
+            (1, 3, 5, 7),
+            tuple(range(n_nodes)),
+        ]
+
+    def test_regression_paths_agree(self, regression_setup):
+        model, graph, _ = regression_setup
+        explainer = MyersonExplainer(graph, model)
+        n_nodes = graph.x.shape[0]
+        coalitions = self._coalitions(n_nodes)
+
+        batched = explainer.calculate_worth_of_graph_restricted_coalitions(coalitions)
+        for c in coalitions:
+            single = explainer.calculate_worth_of_single_graph_restricted_coalition(
+                c, graph)
+            assert batched[c] == pytest.approx(single, abs=1e-6), (
+                f"batched vs single mismatch for {c}: {batched[c]} != {single}")
+
+    def test_classification_paths_agree(self, classification_setup):
+        model, graph, _ = classification_setup
+        explainer = MyersonClassExplainer(graph, model)
+        n_nodes = graph.x.shape[0]
+        coalitions = self._coalitions(n_nodes)
+
+        batched = explainer.calculate_worth_of_graph_restricted_coalitions(coalitions)
+        for c in coalitions:
+            single = explainer.calculate_worth_of_single_graph_restricted_coalition(
+                c, graph)
+            assert np.allclose(batched[c], single, atol=1e-6), (
+                f"batched vs single mismatch for {c}: {batched[c]} != {single}")
+
+    def test_batch_data_matches_single_subgraph(self, regression_setup):
+        """Tensor-level check: the disjoint-union built by
+        ``_batch_data_from_coalitions`` yields, per graph, the same forward output
+        as individually collated ``subgraph_from_coalition`` graphs.
+        """
+        model, graph, _ = regression_setup
+        explainer = MyersonExplainer(graph, model)
+        n_nodes = graph.x.shape[0]
+        coalitions = self._coalitions(n_nodes)
+
+        x, edge_index, batch = explainer._batch_data_from_coalitions(coalitions)
+        batched_out = explainer._forward(x, edge_index, batch)
+
+        for i, c in enumerate(coalitions):
+            subgraph = explainer.subgraph_from_coalition(c, graph)
+            single_out = explainer._forward(
+                subgraph.x, subgraph.edge_index, explainer._batch_var(subgraph))
+            assert torch.allclose(batched_out[i], single_out.squeeze(0), atol=1e-6), (
+                f"forward mismatch for coalition {c}")

@@ -94,3 +94,22 @@ class TestMyersonSamplingClassExplainer:
         my_values = sampler.sample_all_myerson_values()
         for my, sol in zip(my_values, solution):
             assert my == pytest.approx(sol, rel=1e-1, abs=1e-1), f"{my_values=}, {solution=}"
+
+
+class TestModelNotMutated:
+
+    def test_explainer_preserves_training_flag(self, regression_setup):
+        model, graph, _ = regression_setup
+        model.train()
+        assert model.training is True
+        explainer = MyersonExplainer(graph, model)
+        explainer.calculate_all_myerson_values()
+        assert model.training is True, "Explainer silently mutated the model's training flag"
+
+    def test_explainer_preserves_eval_flag(self, regression_setup):
+        model, graph, _ = regression_setup
+        model.eval()
+        assert model.training is False
+        explainer = MyersonExplainer(graph, model)
+        explainer.calculate_all_myerson_values()
+        assert model.training is False, "Explainer silently mutated the model's training flag"

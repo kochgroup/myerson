@@ -57,7 +57,7 @@ class ShapleyExplainer(ShapleyCalculator):
         Returns:
             float: Worth, the output of the coalition function for the subgraph. 
         """
-        if coalition == ():
+        if not coalition:
             return 0.
         subgraph = self.subgraph_from_coalition(coalition, pyg_graph)
         out = self.coalition_function(subgraph.x, subgraph.edge_index, self._batch_var(subgraph))
@@ -215,7 +215,7 @@ class ShapleyClassExplainer(ShapleyExplainer):
         Returns:
             tensor: Worth, the output of the coalition function for the subgraph. 
         """
-        if coalition == ():
+        if not coalition:
             return torch.zeros(self.pred.shape)
         subgraph = self.subgraph_from_coalition(coalition, pyg_graph)
         out = self.coalition_function(subgraph.x, subgraph.edge_index, self._batch_var(subgraph))
