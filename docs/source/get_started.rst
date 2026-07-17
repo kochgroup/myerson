@@ -65,7 +65,7 @@ Using the formula, we can calculate the Shapley value for player :math:`1`:
 
 .. math::
 
-    \begin{align*}
+    \begin{aligned}
         \text{Sh}_1\,(v) &= \frac{1}{3!}\,\Big((v(\{1\}) - v(\emptyset)) & \overbrace{(1,2,3)}^R\\
         &\quad+(v(\{1\}) - v(\emptyset)) & (1,3,2)\\
         &\quad+(v(\{2,1\}) - v(\{2\})) & (2,1,3)\\
@@ -74,7 +74,7 @@ Using the formula, we can calculate the Shapley value for player :math:`1`:
         &\quad+(v(\{3,2,1\}) - v(\{3,2\}))\Big) & (3,2,1)\\
         &=\frac{1}{3!}\,(0+0+1+1+1+1) \\
         &=\frac{2}{3}
-    \end{align*}
+    \end{aligned}
 
 In the order :math:`(2,3,1)` the players :math:`2` and :math:`3` have a right glove each, so they can generate a value of :math:`v(\{2,3\}) = 0`. Together with player :math:`1` they can form a pair of gloves and thus generate a value of :math:`v(\{2,3,1\} = 1`, so the marginal contribution player :math:`1` makes for this ordering is :math:`1`.
 
@@ -103,7 +103,7 @@ For our example we calculate the Myerson values as follows (differences to the S
 
 .. math::
 
-    \begin{align*}
+    \begin{aligned}
         \text{My}_1\,(v, \mathcal{G}) &= \frac{1}{3!}\,\Big((v(\{1\}) - v(\emptyset)) & \overbrace{(1,2,3)}^R\\
         &\quad+(v(\{1\}) - v(\emptyset)) & (1,3,2)\\
         &\quad+(v(\{2,1\}) - v(\{2\})) & (2,1,3)\\
@@ -112,7 +112,7 @@ For our example we calculate the Myerson values as follows (differences to the S
         &\quad+(v(\{3,2,1\}) - v(\{3,2\}))\Big) & (3,2,1)\\ 
         &=\frac{1}{3!}\,(0+0+1+1+\boldsymbol{0}+1) \\
         &=\boldsymbol{\frac{1}{2}}
-    \end{align*}
+    \end{aligned}
 
 For players :math:`2` and :math:`3` this results in :math:`\text{My}_2\,(v) = \frac{1}{2}` and :math:`\text{My}_3\,(v) = 0`, respectively. With the cooperation structure enforced, player :math:`2` profits from his central role, linking the other two players. Now player :math:`3` can only contribute to the overall gain when player :math:`2` is present, who has the same glove, thus player :math:`3` does not contribute anything. In a complete graph the Myerson value is equivalent to the Shapley value.
 
