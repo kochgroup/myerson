@@ -16,10 +16,9 @@ class TestBitmaskHelpers:
     """
 
     def _adjacency(self, graph):
-        # A trivial coalition function is enough; we only need the adjacency
-        # machinery, not any worth evaluation.
+        # using dummy coalition function
         calc = MyersonCalculator(graph=graph,
-                                 coalition_function=lambda coalition, g: 0.0)
+                                 coalition_function=lambda coalition, graph: 0.0)
         return calc, calc._get_adjacency_masks(graph)
 
     def test_connected_component_masks_splits_disconnected_subgraph(self):
@@ -41,8 +40,9 @@ class TestBitmaskHelpers:
         graph.add_edges_from([(1, 2), (2, 3)])
         _, (index_to_label, label_to_index, neighbor_masks) = \
             self._adjacency(graph)
+        # using dummy coalition function
         calc = MyersonCalculator(graph=graph,
-                                 coalition_function=lambda coalition, g: 0.0)
+                                 coalition_function=lambda coalition, graph: 0.0)
 
         mask = (1 << label_to_index[1]) | (1 << label_to_index[3])
         comps = calc._connected_component_masks(mask, neighbor_masks)
@@ -94,8 +94,9 @@ class TestBitmaskHelpers:
         graph = nx.Graph()
         graph.add_edges_from([(0, 1), (1, 2), (2, 0), (3, 4), (4, 5)])
         graph.add_node(6)
+        # using dummy coalition function
         calc = MyersonCalculator(graph=graph,
-                                 coalition_function=lambda coalition, g: 0.0)
+                                 coalition_function=lambda coalition, graph: 0.0)
 
         coalitions = [
             (0, 1, 2, 3, 4, 5, 6),

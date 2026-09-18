@@ -57,11 +57,13 @@ class TestMyersonCalculator:
     def test_connected_subgraph_count_lower_bound_is_exact_for_trees(self):
         """The spanning-forest lower bound equals the true count for trees."""
         path = nx.path_graph(5)
+        # using dummy coalition function
         calc = MyersonCalculator(path, lambda coalition, graph: 0.0)
         # A path on n nodes has n * (n + 1) / 2 connected induced subgraphs.
         assert calc.connected_subgraph_count_lower_bound() == 15
 
         star = nx.star_graph(4)
+        # using dummy coalition function
         calc = MyersonCalculator(star, lambda coalition, graph: 0.0)
         # Star connected subgraphs: every non-empty leaf subset with the centre,
         # plus each singleton leaf.
