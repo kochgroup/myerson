@@ -321,6 +321,50 @@ class MyersonCalculator:
             return 0
         return len(self.restrict(grand_coalition, nx_graph))
 
+    @staticmethod
+    def _format_diagnostic(value) -> str:
+        """Render a scalar or per-task-vector worth/prediction for logging.
+
+        Never calls ``float()`` on an unknown object: This would raises ``TypeError``
+        for a numpy vector and ``RuntimeError`` for a multi-element torch tensor.
+        """
+        try:
+            arr = np.asarray(value, dtype=float).reshape(-1)
+        except Exception:                      # exotic worth type - never fail here
+            return repr(value)
+        if arr.size == 1:
+            return f"{arr[0]:.4f}"
+        return np.array2string(arr, precision=4, separator=", ")
+
+    def _warn_if_disconnected(self, cached_prediction=None) -> int:
+        """Warn that a disconnected input breaks prediction == grand-coalition worth.
+
+        A pooled GNN readout is not additive over components, so for a salt /
+        solvate the sum of the Myerson values (which *is* component efficient)
+        will not match ``model(graph)``. Callers get one WARNING; the
+        prediction-vs-worth comparison costs two extra forward passes, so it is
+        computed only when INFO logging is actually enabled.
+
+        Returns:
+            int: the number of connected components (1 means nothing was logged).
+        """
+        cc = self.number_connected_components()
+        if cc <= 1:
+            return cc
+        self.log.warning(
+            f"Your graph has {cc} individual components. The worth of the grand"
+            " coalition and the prediction of a GNN can differ.")
+        # Only explainers have a model to query; the pure game-theory base does not.
+        if not self.log.isEnabledFor(logging.INFO) \
+                or not hasattr(self, "calculate_prediction"):
+            return cc
+        pred = cached_prediction if cached_prediction is not None \
+            else self.calculate_prediction()
+        worth = self.calculate_worth_of_grand_coalition()
+        self.log.info(f"Prediction={self._format_diagnostic(pred)}, "
+                      f"Worth={self._format_diagnostic(worth)}")
+        return cc
+
     def restrict(self, coalition: tuple, nx_graph: nx.classes.graph.Graph) -> list[tuple]:
         """Restricts a graph through a (sub)set of nodes / players. Generate a
         list of graph restricted coalitions, i. e. a list of node indices of

@@ -2,6 +2,7 @@ import pytest
 
 import numpy as np
 import torch
+import logging
 from chemprop.models.model import MPNN
 from chemprop.data import MoleculeDatapoint, MoleculeDataset
 
@@ -113,3 +114,26 @@ class TestModelNotMutated:
         explainer = MyersonExplainer(graph, model)
         explainer.calculate_all_myerson_values()
         assert model.training is False, "Explainer silently mutated the model's training flag"
+
+@pytest.fixture(scope="module")
+def disconnected_molgraph():
+    """Phenol hydrate: two components, the realistic salt/solvate case."""
+    return MoleculeDataset(
+        [MoleculeDatapoint.from_smi("c1ccccc1O.O", [3.3])])[0].mg
+
+
+class TestDisconnectedWarning:
+
+    def test_disconnected_molecule_warns(self, regression_setup,
+                                         disconnected_molgraph, caplog):
+        """Wiring check: the chemprop explainer reaches the shared helper, and
+        the helper's zero-arg `calculate_worth_of_grand_coalition()` /
+        `calculate_prediction()` calls resolve against the MPNN overrides.
+        """
+        model, _, _ = regression_setup
+        with caplog.at_level(logging.INFO):
+            explainer = MyersonExplainer(disconnected_molgraph, model)
+        assert explainer.number_connected_components() == 2
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("2 individual components" in m for m in messages), messages
+        assert any("Prediction=" in m and "Worth=" in m for m in messages), messages

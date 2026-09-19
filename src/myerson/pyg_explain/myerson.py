@@ -45,14 +45,7 @@ class MyersonExplainer(MyersonCalculator):
 
         self.nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
         self.grand_coalition = list(self.nx_graph.nodes()) # alias: set of players / set of nodes / F
-        cc = self.number_connected_components()
-        if cc > 1:
-            self.log.warning(f"Your graph has {cc} individual components. The worth"
-                        " of the grand coalition and the prediction of a GNN can"
-                        " differ.")
-            pred = self.calculate_prediction()
-            worth = self.calculate_worth_of_grand_coalition()
-            self.log.warning(f"Prediction={pred:.4f}, Worth={worth:.4f}")
+        self._warn_if_disconnected()
 
         # if "myerson.fast_restrict" in reversed(sys.modules):
         #     self.fast_restrict_available = True
@@ -361,14 +354,7 @@ class MyersonSamplingExplainer(MyersonSampler, MyersonExplainer):
 
         self.nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
         self.grand_coalition = list(self.nx_graph.nodes()) # alias: set of players / set of nodes / F
-        cc = self.number_connected_components()
-        if cc > 1:
-            self.log.warning(f"Your graph has {cc} individual components. The worth"
-                        " of the grand coalition and the prediction of a GNN can"
-                        " differ.")
-            pred = self.calculate_prediction()
-            worth = self.calculate_worth_of_grand_coalition()
-            self.log.warning(f"Prediction={pred:.4f}, Worth={worth:.4f}")
+        self._warn_if_disconnected()
 
         # if "myerson.cpp_graph_divide" in sys.modules:
         #     self.fast_restrict_available = True
@@ -408,14 +394,7 @@ class MyersonClassExplainer(MyersonExplainer):
         self.nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
         self.grand_coalition = list(self.nx_graph.nodes()) # alias: set of players / set of nodes / F
         self.pred = self.calculate_prediction()
-        cc = self.number_connected_components()
-        if cc > 1:
-            self.log.warning(f"Your graph has {cc} individual components. The worth"
-                        " of the grand coalition and the prediction of a GNN can"
-                        " differ.")
-            pred = self.calculate_prediction()
-            worth = self.calculate_worth_of_grand_coalition()
-            self.log.warning(f"Prediction={pred}, Worth={worth}")
+        self._warn_if_disconnected(cached_prediction=self.pred)
     
     def calculate_worth_of_single_graph_restricted_coalition(self, 
         graph_restricted_coalition: tuple,
@@ -494,14 +473,7 @@ class MyersonSamplingClassExplainer(MyersonSamplingExplainer, MyersonClassExplai
         self.nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
         self.grand_coalition = list(self.nx_graph.nodes()) # alias: set of players / set of nodes / F
         self.pred = self.calculate_prediction()
-        cc = self.number_connected_components()
-        if cc > 1:
-            self.log.warning(f"Your graph has {cc} individual components. The worth"
-                        " of the grand coalition and the prediction of a GNN can"
-                        " differ.")
-            pred = self.calculate_prediction()
-            worth = self.calculate_worth_of_grand_coalition()
-            self.log.warning(f"Prediction={pred}, Worth={worth}")
+        self._warn_if_disconnected(cached_prediction=self.pred)
 
     def map_coalition_to_worth(self, coalitions: list[tuple], 
                        coalitions_to_graph_restricted_coalitions: dict,
