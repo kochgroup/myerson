@@ -51,14 +51,14 @@ class TestShapleyExplainer:
 
     def test_complete_explanations(self, regression_setup):
         model, graph, solution = regression_setup
-        explainer = ShapleyExplainer(graph, model, disable_tqdm=False)
+        explainer = ShapleyExplainer(graph, model, disable_tqdm=True)
         sh_values = explainer.calculate_all_shapley_values()
         for sh, sol in zip(sh_values, solution):
             assert sh == pytest.approx(sol, abs=1e-5), f"{sh_values=}, {solution=}"
 
     def test_sampled_explanations(self, regression_setup):
         model, graph, solution = regression_setup
-        sampler = ShapleySamplingExplainer(graph, model, seed=42, number_of_samples=1000, disable_tqdm=False)
+        sampler = ShapleySamplingExplainer(graph, model, seed=42, number_of_samples=1000, disable_tqdm=True)
         sh_values = sampler.sample_all_shapley_values()
         for sh, sol in zip(sh_values, solution):
             assert sh == pytest.approx(sol, abs=1e-1), f"{sh_values=}, {solution=}"
@@ -68,14 +68,14 @@ class TestShapleyClassExplainer:
                        
     def test_complete_class_explanations(self, classification_setup):
         model, graph, solution = classification_setup
-        explainer = ShapleyClassExplainer(graph, model, disable_tqdm=False)
+        explainer = ShapleyClassExplainer(graph, model, disable_tqdm=True)
         sh_values = explainer.calculate_all_shapley_values()
         for sh, sol in zip(sh_values, solution):
             assert np.allclose(sh, sol, atol=0.0001), f"{sh_values=}, {solution=}"
 
     def test_sampled_class_explanations(self, classification_setup):
         model, graph, solution = classification_setup
-        explainer = ShapleySamplingClassExplainer(graph, model, disable_tqdm=False)
+        explainer = ShapleySamplingClassExplainer(graph, model, disable_tqdm=True)
         sh_values = explainer.sample_all_shapley_values()
         for sh, sol in zip(sh_values, solution):
             assert np.allclose(sh, sol, atol=0.01), f"{sh_values=}, {solution=}"
