@@ -32,6 +32,11 @@ class MyersonCalculator:
         Else, the additional gain players can obtain through coalition is
         restricted only to players which are connected by edges in the graph.
 
+    Precondition:
+        ``coalition_function((), graph) == 0``; the coalition function is never
+        evaluated on the empty coalition. A non-zero ``v(())`` is ignored (with
+        a warning), not honoured.
+
     Args:
         graph (nx.classes.graph.Graph): The coalition structure of the game.
         coalition_function (Callable): The coalition for which to calculate
@@ -125,7 +130,10 @@ class MyersonCalculator:
             float: Worth, the output of the coalition function for the connected
             subgraph.
         """
-        return self.coalition_function(graph_restricted_coalition, nx_graph)
+        worth = self.coalition_function(graph_restricted_coalition, nx_graph)
+        if not graph_restricted_coalition:
+            self._warn_if_empty_coalition_nonzero(worth)
+        return worth
 
     def calculate_worth_of_graph_restricted_coalitions(self,
         graph_restricted_coalitions: set) -> dict:
@@ -335,6 +343,34 @@ class MyersonCalculator:
         if arr.size == 1:
             return f"{arr[0]:.4f}"
         return np.array2string(arr, precision=4, separator=", ")
+
+    def _warn_if_empty_coalition_nonzero(self, worth) -> None:
+        """Warn if the empty coalition does not evaluate to zero.
+
+        The Myerson value formula assumes :math:`v(\\emptyset) = 0`: the empty
+        coalition contributes nothing to any player's marginal contribution. A
+        custom coalition function that returns a non-zero worth for ``()``
+        silently corrupts every Myerson value. The explainers (chemprop / PyG)
+        override :meth:`calculate_worth_of_single_graph_restricted_coalition` to
+        return ``_empty_worth()`` (zero), so they never hit this path; the
+        legacy custom coalition-function path is the one that needs guarding.
+
+        Args:
+            worth: The worth returned by the coalition function for the empty
+                coalition.
+        """
+        try:
+            arr = np.asarray(worth, dtype=float).reshape(-1)
+        except Exception:                      # exotic worth type - never fail here
+            return
+        if arr.size == 0 or np.all(arr == 0.0):
+            return
+        self.log.warning(
+            "The empty coalition () evaluated to a non-zero worth "
+            f"{self._format_diagnostic(worth)}. The Myerson value formula assumes "
+            "v(empty) == 0; a non-zero empty-coalition worth will corrupt every "
+            "Myerson value. Return 0 for the empty coalition in your coalition "
+            "function.")
 
     def _warn_if_disconnected(self, cached_prediction=None) -> int:
         """Warn that a disconnected input breaks prediction == grand-coalition worth.
@@ -729,6 +765,15 @@ class MyersonCalculator:
         sub_masks, sub_tuples, neighbour_masks = \
             self._enumerate_connected_subgraphs(max_subgraphs=max_subgraphs)
 
+        # The enumerator never emits the empty subgraph, i.e. v'(∅) = 0 is
+        # hardcoded here (correct: an empty sum over zero components). Probe the
+        # oracle once so a non-zero v(()) still gets flagged on this path.
+        try:
+            self.calculate_worth_of_single_graph_restricted_coalition(
+                (), self.nx_graph)
+        except Exception:                      # worth undefined on () is fine
+            pass
+
         # One batched worth evaluation over all connected subgraphs (the GNN
         # forward). Could be chunked to bound memory to O(batch) instead of O(C).
         worth_by_tuple = self.calculate_worth_of_graph_restricted_coalitions(
@@ -1090,11 +1135,11 @@ class MyersonSampler(MyersonCalculator):
         worth_of_component_mask = {
             c: graph_restricted_coalitions_to_worth[t]
             for c, t in self._component_tuple_of.items()}
-        # Worth of the empty coalition: the () component is included in the
-        # evaluated set whenever some sampled coalition is empty, matching the
-        # previous map_coalition_to_worth behaviour (pure game: coalition_function
-        # of (); GNN: the explainer's zero `_empty_worth`).
-        empty_worth = graph_restricted_coalitions_to_worth.get(())
+        # v'(∅) = 0 (sum over zero components), matching the exact
+        # connected-subgraph path. A non-zero v(()) is warned about in
+        # calculate_worth_of_single_graph_restricted_coalition and ignored here.
+        empty = graph_restricted_coalitions_to_worth.get(())
+        empty_worth = 0.0 if empty is None else empty - empty  # typed zero
 
         worth_by_mask = {}
         for mask, comps in self._components_of.items():
