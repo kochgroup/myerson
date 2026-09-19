@@ -59,7 +59,7 @@ class TestPerturbationExplainer:
 
     def test_complete_explanations(self, regression_setup):
         model, graph, solution = regression_setup
-        explainer = PerturbationExplainer(graph, model, disable_tqdm=False)
+        explainer = PerturbationExplainer(graph, model, disable_tqdm=True)
         perturbation_values = explainer.calculate_all_perturbation_values()
         for xp, sol in zip(perturbation_values, solution):
             assert xp == pytest.approx(sol, abs=1e-5), f"{perturbation_values=}, {solution=}"
@@ -71,7 +71,7 @@ class TestPerturbationClassExplainer:
         import logging
         logging.basicConfig(level=logging.INFO, format='[%(asctime)s - %(levelname)s] %(message)s', force=True)
         model, graph, solution = classification_setup
-        explainer = PerturbationClassExplainer(graph, model, disable_tqdm=False)
+        explainer = PerturbationClassExplainer(graph, model, disable_tqdm=True)
         perturbation_values = explainer.calculate_all_perturbation_values()
         for xp, sol in zip(perturbation_values, solution):
             assert np.allclose(xp, sol, atol=0.01), f"{perturbation_values=}, {solution=}"

@@ -44,8 +44,6 @@ Explain PyG GNNs with Myerson values
 Explain Chemprop Models with Myerson values
 -------------------------------------------
 
-.. autofunction:: myerson.chemprop_explain.explain
-
 .. autoclass:: myerson.chemprop_explain.MyersonExplainer
     :members:
 

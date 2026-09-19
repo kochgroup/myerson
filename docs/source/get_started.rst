@@ -207,6 +207,12 @@ Explain a PyG GNN Prediction
 
 
 
+Detailed Chemprop Instructions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For detailed instructions on using Myerson values with Chemprop, see the
+`Chemprop Myerson values guide <https://chemprop.readthedocs.io/en/latest/interpreting_with_myerson_values.html>`_.
+
 Visualizing Explanations on Molecular Structures
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

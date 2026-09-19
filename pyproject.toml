@@ -38,6 +38,12 @@ chemprop = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "--strict-markers"
+markers = [
+    "chemprop: requires the optional chemprop backend and its checkpoints",
+    "pyg: requires torch_geometric and the PyG test checkpoints",
+    "slow: loads model checkpoints / runs GNN forwards",
+]
 
 [tool.uv.workspace]
 members = [

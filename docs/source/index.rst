@@ -16,6 +16,8 @@ A graph neural network (GNN) can be treated as a coalition function for a game
 and the Myerson values can be used as feature attribution explanations to understand
 a model prediction. This package also implements methods to explain `PyG <https://pyg.org/>`_ 
 GNNs and `Chemprop <https://chemprop.readthedocs.io/>`_ models with Myerson values.
+For detailed instructions on using Myerson values with Chemprop, see the
+`Chemprop Myerson values guide <https://chemprop.readthedocs.io/en/latest/interpreting_with_myerson_values.html>`_.
 
 Calculating the Myerson value scales exponentially with bigger graphs / more players.
 Therfore, Monte Carlo sampling techniques were implemented to approximate the Myerson values.
@@ -52,6 +54,11 @@ Examples
 
 For example code have a look on the :ref:`get started` page.
 
+Citation
+========
+
+Samuel K. R. Homberg, Malte L. Modlich, Marlon Becker, Janosch Menke, Garrett M. Morris, Benjamin Risse, Oliver Koch, "Interpreting graph neural networks with Myerson values for cheminformatics approaches", *Digital Discovery*, 2026, **5**, 3378–3389. DOI: `10.1039/D5DD00577A <https://doi.org/10.1039/D5DD00577A>`_
+
 
 Contents
 ========
@@ -62,4 +69,5 @@ Contents
    Get started <get_started>
    Documentation <documentation>
    GitHub ⧉ <https://github.com/kochgroup/myerson>
+   Digital Discovery ⧉ <https://doi.org/10.1039/D5DD00577A>
    ChemRxiv ⧉ <https://chemrxiv.org/engage/chemrxiv/article-details/668c3885c9c6a5c07aaca81e>
