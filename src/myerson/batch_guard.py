@@ -116,13 +116,21 @@ class BatchInvarianceGuardMixin:
     and call :meth:`_guard_batch_size` once, right before its chunking loop.
     """
 
-    batch_check: str = "auto"
+    batch_check: str = "auto"              # "auto" | "strict" | "off"
+    #: Relative tolerance, applied to the magnitude of the probe worths.
     batch_check_rtol: float = 1e-3
-    batch_check_atol: float = 1e-5
+    #: Hard absolute floor. Deliberately tiny: the operative tolerance is
+    #: derived from the *measured* noise floor, not from a constant guessed at
+    #: authoring time (a constant either masks coupling in small-output models
+    #: or flags noise in models with heavy cancellation).
+    batch_check_atol: float = 1e-9
+    #: Safety factor applied to the measured float-noise floor.
+    batch_check_noise_factor: float = 16.0
     batch_check_max_probes: int = 3
 
-    _batch_safe: bool | None = None
-    _batch_check_report: str = ""
+    _batch_safe: bool | None = None        # cached verdict (per instance)
+    _batch_check_report: str = ""          # human-readable detail of the verdict
+    _batch_check_tol: float = 0.0           # tolerance actually used (diagnostics)
 
     def _single_worth(self, coalition):
         """Worth of ``coalition`` via the single-subgraph (unbatched) path."""
@@ -142,6 +150,15 @@ class BatchInvarianceGuardMixin:
         except (TypeError, ValueError):
             return np.asarray(value.tolist(), dtype=np.float64).reshape(-1)
 
+    @staticmethod
+    def _max_abs_diff(a: np.ndarray, b: np.ndarray) -> float:
+        """Largest absolute difference, ``inf`` on a shape mismatch."""
+        if a.shape != b.shape:
+            return float("inf")
+        if a.size == 0:
+            return 0.0
+        return float(np.abs(a - b).max())
+
     def _probe_coalitions(self, coalitions) -> list[tuple]:
         """Pick a few *size-heterogeneous* probes from the real workload."""
         unique = {tuple(c) for c in coalitions if c}
@@ -155,8 +172,24 @@ class BatchInvarianceGuardMixin:
     def verify_batch_invariance(self, coalitions) -> bool:
         """Probe the model: does batching change the worths?
 
+        Four checks, all on *real* coalitions from the current workload:
+
+        1. **determinism** - two identical single-graph forwards must agree;
+        2. **noise floor** - the batched collator on a batch of *one* graph must
+           reproduce the single-subgraph path. A batch of one cannot couple
+           anything, so whatever difference remains is the float
+           reduction-order noise of the two code paths. This *calibrates* the
+           tolerance instead of hard-coding one, which is what keeps the verdict
+           independent of the model's output scale;
+        3. **shape** - batched and single worths must agree in shape;
+        4. **invariance** - one batched forward over size-heterogeneous probes
+           must reproduce the per-probe single forwards within that tolerance.
+
+        Costs ``max_probes + 3`` forwards, once per instance.
+
         Returns:
-            bool: ``True`` if batched and single-subgraph worths agree.
+            bool: ``True`` if batching is safe. Details (including the
+            tolerance used) are left in ``self._batch_check_report``.
         """
         probes = self._probe_coalitions(coalitions)
         if len(probes) < 2:
@@ -164,42 +197,65 @@ class BatchInvarianceGuardMixin:
                 "skipped (fewer than two distinct connected subgraphs)")
             return True
 
-        first = self._as_float_array(self._single_worth(probes[0]))
-        again = self._as_float_array(self._single_worth(probes[0]))
-        if not np.allclose(first, again, rtol=self.batch_check_rtol,
-                           atol=self.batch_check_atol):
+        # Calibrate on the *largest* probe: most reduction ops, most noise.
+        pivot = probes[-1]
+        first = self._as_float_array(self._single_worth(pivot))
+        again = self._as_float_array(self._single_worth(pivot))
+        solo = self._as_float_array(self._worth_of_chunk([pivot])[0])
+
+        singles = [self._as_float_array(self._single_worth(c))
+                   if c != pivot else first for c in probes]
+        scale = max((float(np.abs(s).max()) for s in singles if s.size),
+                    default=0.0)
+
+        repeat_noise = self._max_abs_diff(first, again)
+        if repeat_noise > self.batch_check_rtol * scale + self.batch_check_atol:
             self._batch_check_report = (
                 "the model is non-deterministic in eval mode (two identical "
-                f"single-graph forwards differ by "
-                f"{float(np.abs(first - again).max()):.3g}); batched and "
-                "unbatched worths cannot be reconciled")
+                f"single-graph forwards differ by {repeat_noise:.3g}); batched "
+                "and unbatched worths cannot be reconciled")
             return False
 
-        batched = [self._as_float_array(w) for w in self._worth_of_chunk(list(probes))]
-        singles = [self._as_float_array(self._single_worth(c)) for c in probes]
+        # A batch of one cannot couple graphs -> this is pure float noise.
+        collator_noise = self._max_abs_diff(first, solo)
+        if collator_noise == float("inf"):
+            self._batch_check_report = (
+                f"batched worth has shape {solo.shape} but the single-subgraph "
+                f"worth has shape {first.shape} for coalition {pivot}")
+            return False
+
+        noise = max(repeat_noise, collator_noise)
+        tol = (self.batch_check_atol
+               + self.batch_check_rtol * scale
+               + self.batch_check_noise_factor * noise)
+        self._batch_check_tol = tol
+
+        batched = [self._as_float_array(w)
+                   for w in self._worth_of_chunk(list(probes))]
 
         worst, worst_coalition = 0.0, None
         for coalition, b, s in zip(probes, batched, singles, strict=True):
-            if b.shape != s.shape:
+            diff = self._max_abs_diff(b, s)
+            if diff == float("inf"):
                 self._batch_check_report = (
                     f"batched worth has shape {b.shape} but the single-subgraph "
                     f"worth has shape {s.shape} for coalition {coalition}")
                 return False
-            if b.size and not np.allclose(b, s, rtol=self.batch_check_rtol,
-                                          atol=self.batch_check_atol):
-                diff = float(np.abs(b - s).max())
-                if diff > worst:
-                    worst, worst_coalition = diff, coalition
+            if diff > tol and diff > worst:
+                worst, worst_coalition = diff, coalition
 
         if worst_coalition is None:
-            self._batch_check_report = "passed"
+            self._batch_check_report = (
+                f"passed (max deviation <= tol={tol:.3g}, "
+                f"noise floor {noise:.3g}, worth scale {scale:.3g})")
             return True
 
         suspects = find_batch_coupled_modules(
             getattr(self, "coalition_function", None))
         self._batch_check_report = (
             f"batching changes the worth by up to {worst:.3g} (coalition "
-            f"{worst_coalition}); the model is not a pure per-graph function"
+            f"{worst_coalition}, tol={tol:.3g}, measured float-noise floor "
+            f"{noise:.3g}); the model is not a pure per-graph function"
             + (f"; suspect modules: {', '.join(suspects)}" if suspects else
                "; no batch-coupled module found by the static scan, check for "
                "size-dependent ops written inline in forward()"))
