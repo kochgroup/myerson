@@ -29,6 +29,7 @@ if not HAS_PYG:
         "test_myerson_explain.py",
         "test_perturbation_explain.py",
         "test_shapley_explain.py",
+        "test_batch_guard.py",
         "testmodels.py",
         "test_disconnected_warning.py",
     ]

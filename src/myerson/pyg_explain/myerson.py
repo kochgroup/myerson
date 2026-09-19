@@ -1,4 +1,5 @@
 from myerson import MyersonCalculator, MyersonSampler
+from myerson.batch_guard import BatchInvarianceGuardMixin, BatchCoupledModelError  # noqa: F401
 
 try:
     import torch
@@ -15,7 +16,7 @@ import logging
 #     pass
 
 
-class MyersonExplainer(MyersonCalculator):
+class MyersonExplainer(BatchInvarianceGuardMixin, MyersonCalculator):
     r"""Explains the prediction of a graph neural network (GNN) with Myerson values.
         The GNN is treated as the coalition function of a game and its prediction
         as the payoff of the game. The Myerson values show how much each node of 
@@ -119,6 +120,20 @@ class MyersonExplainer(MyersonCalculator):
         out = self._forward(subgraph.x, subgraph.edge_index, self._batch_var(subgraph))
         return self._postprocess_worth(out.squeeze(0))
 
+    def _single_worth(self, coalition: tuple):
+        """Guard hook: worth via the single-subgraph (unbatched) path."""
+        return self.calculate_worth_of_single_graph_restricted_coalition(
+            coalition, self.pyg_graph)
+
+    def _worth_of_chunk(self, coalitions: list) -> list:
+        """Guard hook / batched worker: one forward for the whole chunk.
+
+        Returns the post-processed worths in ``coalitions`` order.
+        """
+        x, edge_index, batch = self._batch_data_from_coalitions(list(coalitions))
+        out = self._forward(x, edge_index, batch)
+        return [self._postprocess_worth(row) for row in out]
+
     def calculate_worth_of_graph_restricted_coalitions(self,
         graph_restricted_coalitions: list,
         batch_size: int = 4096) -> dict:
@@ -151,15 +166,15 @@ class MyersonExplainer(MyersonCalculator):
             else:
                 non_empty.append(coalition)
 
+        batch_size = self._guard_batch_size(non_empty, batch_size)
+
         for start in tqdm(range(0, len(non_empty), batch_size),
                           desc="Calculating worth of graph restricted coalitions",
                           disable=self.disable_tqdm):
             chunk = non_empty[start:start + batch_size]
-            x, edge_index, batch = self._batch_data_from_coalitions(chunk)
-            out = self._forward(x, edge_index, batch)
-            for coalition, worth in zip(chunk, out):
-                graph_restricted_coalitions_to_worth[coalition] = \
-                    self._postprocess_worth(worth)
+            for coalition, worth in zip(chunk, self._worth_of_chunk(chunk),
+                                        strict=True):
+                graph_restricted_coalitions_to_worth[coalition] = worth
         return graph_restricted_coalitions_to_worth
 
     def _batch_data_from_coalitions(self, coalitions: list):

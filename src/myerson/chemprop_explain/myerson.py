@@ -13,9 +13,10 @@ from chemprop.data.molgraph import MolGraph
 from chemprop.data.collate import BatchMolGraph
 
 from myerson import MyersonCalculator, MyersonSampler
+from myerson.batch_guard import BatchInvarianceGuardMixin, BatchCoupledModelError  # noqa: F401
 from myerson.chemprop_explain.utils import to_networkx
 
-class MyersonExplainer(MyersonCalculator):
+class MyersonExplainer(BatchInvarianceGuardMixin, MyersonCalculator):
     r"""Explains the prediction of a chemprop MPNN with Myerson values.
         The MPNN is treated as the coalition function of a game and its prediction
         as the payoff of the game. The Myerson values show how much each node of 
@@ -73,6 +74,16 @@ class MyersonExplainer(MyersonCalculator):
     def _postprocess_worth(self, model_output_row: torch.Tensor) -> float:
         """Convert a single row of the (batched) model output into a worth."""
         return model_output_row.item()
+
+    def _single_worth(self, coalition: tuple):
+        """Guard hook: worth via the single-subgraph (unbatched) path."""
+        return self.calculate_worth_of_single_graph_restricted_coalition(
+            coalition, self.molgraph)
+
+    def _worth_of_chunk(self, coalitions: list) -> list:
+        """Guard hook / batched worker: one forward for the whole chunk."""
+        out = self._forward(self._batch_mol_graph_from_coalitions(list(coalitions)))
+        return [self._postprocess_worth(row) for row in out]
 
     def calculate_worth_of_single_graph_restricted_coalition(self,
         graph_restricted_coalition: tuple,
@@ -139,6 +150,9 @@ class MyersonExplainer(MyersonCalculator):
             else:
                 non_empty.append(coalition)
 
+        # Batching is only valid for pure per-graph models; verify once.
+        batch_size = self._guard_batch_size(non_empty, batch_size)
+
         if max_atoms_per_forward is None:
             chunks = [non_empty[start:start + batch_size]
                       for start in range(0, len(non_empty), batch_size)]
@@ -159,10 +173,10 @@ class MyersonExplainer(MyersonCalculator):
         for chunk in tqdm(chunks,
                           desc="Calculating worth of graph restricted coalitions",
                           disable=self.disable_tqdm):
-            out = self._forward(self._batch_mol_graph_from_coalitions(chunk))
-            for coalition, worth in zip(chunk, out, strict=True):
+            for coalition, worth in zip(chunk, self._worth_of_chunk(chunk),
+                                        strict=True):
                 graph_restricted_coalitions_to_worth[
-                    coalition] = self._postprocess_worth(worth)
+                    coalition] = worth
         return graph_restricted_coalitions_to_worth
 
     def _batch_mol_graph_from_coalitions(self, coalitions: list) -> BatchMolGraph:
