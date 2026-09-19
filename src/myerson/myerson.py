@@ -564,7 +564,7 @@ class MyersonCalculator:
         # only needs a consistent total order, so we relabel to "rank" space
         # (rank 0 = highest degree) for the traversal and map back afterwards.
         rank_to_index = sorted(
-            range(n), key=lambda i: (-bin(neighbor_masks[i]).count("1"), i))
+            range(n), key=lambda i: (-neighbor_masks[i].bit_count(), i))
         index_to_rank = [0] * n
         for rank, idx in enumerate(rank_to_index):
             index_to_rank[idx] = rank
@@ -708,7 +708,7 @@ class MyersonCalculator:
             if scalar and value == 0.0:
                 continue                       # contributes nothing to any node
             s = len(tup)                       # |S|
-            t = bin(nbr).count("1")            # |N(S)|
+            t = nbr.bit_count()                # |N(S)|
             denom = fact[s + t]                # (|S|+|N(S)|)!
             # Positive weight for members of S (all of S before u, N(S) after u).
             pos = fact[s - 1] * fact[t] / denom
