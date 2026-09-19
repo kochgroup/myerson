@@ -1,11 +1,17 @@
 """Correctness of the computation paths: brute-force cross-checks, the
 multi-output and legacy lattice paths, edge cases, and sampler behaviour
 (agreement with the exact values and statistical guarantees)."""
+import os
+
 import pytest
 import numpy as np
 import networkx as nx
 from myerson import MyersonBudgetExceeded, MyersonCalculator, MyersonSampler
-from .myerson_helpers import (brute_force_myerson, make_weighted_worth, make_multioutput_worth, _legacy_lattice_myerson, _reference_graphs)
+from .myerson_helpers import (brute_force_myerson, make_weighted_worth,
+                              make_multioutput_worth, _legacy_lattice_myerson,
+                              _reference_graphs, make_ill_conditioned_worth,
+                              caterpillar_graph, _weights_for,
+                              make_additive_worth)
 
 
 class TestExactCorrectnessAgainstBruteForce:
@@ -71,6 +77,96 @@ class TestLegacyLatticePathAgrees:
             MyersonCalculator(graph=graph, coalition_function=worth))
         assert np.allclose(production, legacy, atol=1e-9), (
             f"{name}: {production=} {legacy=}")
+
+
+class TestNumericalStabilityAtScale:
+    """Floating-point *accumulation* (not per-term rounding) is the risk in the
+    connected-subgraph path: each node sums up to ``|C|`` signed terms that are
+    individually orders of magnitude larger than the ``O(v(N))`` result.
+
+    The existing parity/oracle tests run at ``n <= 8`` with a 1e-9 *absolute*
+    tolerance, which says nothing about ``n ~ 20+`` and nothing about worths of
+    large magnitude. These tests use relative tolerances at ``n ~ 16-26`` with an
+    ill-conditioned worth, and are the regression guard for the Neumaier-
+    compensated accumulators.
+    """
+
+    @pytest.mark.parametrize("name,graph", [
+        ("gnp_16", nx.gnp_random_graph(16, 0.22, seed=11)),
+        ("caterpillar_16", caterpillar_graph(8)),
+    ])
+    def test_lattice_parity_at_n16_relative(self, name, graph):
+        """Connected-enum vs the legacy ``2^N`` lattice at n=16 on an
+        ill-conditioned worth, compared with a *relative* tolerance.
+
+        The two paths have completely different cancellation structures, so
+        agreement here is a genuine cross-check of both accumulators rather than
+        of a shared rounding pattern.
+        """
+        worth = make_ill_conditioned_worth()
+        production = MyersonCalculator(
+            graph=graph, coalition_function=worth).calculate_all_myerson_values()
+        legacy = _legacy_lattice_myerson(
+            MyersonCalculator(graph=graph, coalition_function=worth))
+
+        scale = max(float(np.max(np.abs(legacy))), 1.0)
+        rel = np.max(np.abs(production - legacy)) / scale
+        assert rel < 1e-11, f"{name}: relative mismatch {rel:.3e}\n{production=}\n{legacy=}"
+
+    # @pytest.mark.skipif(
+    #     not os.environ.get("MYERSON_SLOW_TESTS"),
+    #     reason="2^20 lattice reference; set MYERSON_SLOW_TESTS=1 to run")
+    def test_lattice_parity_at_n20_relative(self):
+        """Same parity check at n=20 (``2^20`` = 1M lattice coalitions).
+
+        Opt-in because the *reference* is slow, not the production path.
+        """
+        graph = caterpillar_graph(10)  # 20 nodes
+        worth = make_ill_conditioned_worth()
+        production = MyersonCalculator(
+            graph=graph, coalition_function=worth).calculate_all_myerson_values()
+        legacy = _legacy_lattice_myerson(
+            MyersonCalculator(graph=graph, coalition_function=worth))
+
+        scale = max(float(np.max(np.abs(legacy))), 1.0)
+        rel = np.max(np.abs(production - legacy)) / scale
+        assert rel < 1e-11, f"relative mismatch {rel:.3e}\n{production=}\n{legacy=}"
+
+    def test_efficiency_residual_canary_at_n26(self):
+        """Canary: ``|sum(MV) - v(N)| / |v(N)|`` at n=26 on a connected graph.
+
+        Efficiency is exact in exact arithmetic, so the residual is a pure
+        measure of accumulated floating-point error -- and it scales with ``|C|``
+        and with the conditioning of the worth, unlike a small-n absolute check.
+        """
+        graph = caterpillar_graph(13)  # 26 nodes, ~3.3e4 connected subgraphs
+        worth = make_ill_conditioned_worth(base=4.0)
+        calc = MyersonCalculator(graph=graph, coalition_function=worth)
+        values = calc.calculate_all_myerson_values()
+        grand = calc.calculate_worth_of_grand_coalition(graph)
+
+        residual = abs(float(values.sum()) - grand) / abs(grand)
+        assert residual < 1e-11, f"{residual=} {values.sum()=} {grand=}"
+
+    def test_additive_closed_form_at_n26_with_wide_weight_range(self):
+        """Per-node closed form at large n: for an additive game ``MV_i == w_i``
+        exactly, whatever the topology.
+
+        With weights spanning ~9 orders of magnitude the small-weight nodes can
+        only be recovered by cancelling large terms, so this pins per-node
+        accuracy (not just the efficiency aggregate) at n=26.
+        """
+        graph = caterpillar_graph(13)
+        nodes = list(graph.nodes())
+        weights = {node: 10.0 ** (i % 10 - 4) for i, node in enumerate(nodes)}
+        calc = MyersonCalculator(
+            graph=graph, coalition_function=make_additive_worth(weights))
+        values = calc.calculate_all_myerson_values()
+        expected = np.array([weights[node] for node in nodes])
+
+        scale = float(np.max(np.abs(expected)))
+        rel = np.max(np.abs(values - expected)) / scale
+        assert rel < 1e-13, f"relative error {rel:.3e}\n{values=}\n{expected=}"
 
 
 class TestExactEdgeCases:

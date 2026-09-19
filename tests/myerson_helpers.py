@@ -258,6 +258,38 @@ def make_weighted_sq_worth(weights: dict):
         return float(sum(weights[node] for node in coalition)) ** 2
     return worth
 
+
+def make_ill_conditioned_worth(base: float = 4.0, scale: float = 1.0):
+    """Worth with a huge dynamic range across coalition sizes.
+
+    ``v(S) = scale * base**|S| * (1 + 0.25 * sum_i ((i mod 7) + 1))``.
+
+    Under the Skibski neighbour-set weighting this produces terms that span many
+    orders of magnitude and cancel heavily (positive ``S``-terms against negative
+    ``N(S)``-terms), i.e. exactly the regime where naive float64 accumulation
+    loses digits. Deterministic and cheap, so it is usable at n ~ 16-26.
+    """
+    def worth(coalition, nx_graph):
+        if not coalition:
+            return 0.0
+        spread = sum((node % 7) + 1 for node in coalition)
+        return float(scale) * float(base) ** len(coalition) * (1.0 + 0.25 * spread)
+    return worth
+
+
+def caterpillar_graph(spine: int) -> nx.Graph:
+    """Path of ``spine`` nodes with one leaf attached to each spine node.
+
+    Gives ``2 * spine`` players for only ``O(spine * 2**spine)`` connected
+    induced subgraphs, so exact Myerson values stay tractable at n ~ 26 (a
+    realistic small-molecule size) while the factorial weights and the
+    accumulation length become large enough to expose summation error.
+    """
+    graph = nx.path_graph(spine)
+    for i in range(spine):
+        graph.add_edge(i, spine + i)
+    return graph
+
 def make_unanimity_worth(target):
     """Unanimity game ``u_T(S) = 1 if T subset of S else 0``.
 

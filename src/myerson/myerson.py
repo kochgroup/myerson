@@ -557,6 +557,13 @@ class MyersonCalculator:
                                   coalitions: list[tuple], coalition_to_worth: dict) -> float:
         """Calculate a single Myerson value.
 
+        The marginal contributions are summed with Neumaier compensation for the
+        same reason as the connected-enumeration path: ``2^(N-1)`` signed terms
+        cancel down to an ``O(v(N))`` result, so a naive float64 accumulator
+        drifts at large ``N``. (The cancellation *structure* differs from the
+        connected-enum path, which is precisely why this reducer must be
+        compensated too before it can be used as a parity reference.)
+
         Args:
             node (int): Node index for which to calculate the Myerson value.
             grand_coalition (tuple): Set of all players.
@@ -566,17 +573,31 @@ class MyersonCalculator:
         Returns:
             float: Myerson value.
         """
-        my = 0
         size_grand_coalition = len(grand_coalition)
         prefactors = self._precompute_prefactors(size_grand_coalition)
+        total = 0.0           # Neumaier running sum (scalar games)
+        comp = 0.0            # bits lost by `total`
+        tensor_total = None   # fallback for vector-valued (multi-output) worths
         for coalition in coalitions:
             if node in coalition:
                 continue
             size_coalition = len(coalition)
             worth_of_coalition = coalition_to_worth[coalition]
-            worth_of_coalition_with_node = coalition_to_worth[tuple(sorted(coalition+(node,)))]
-            my += prefactors[size_coalition] * (worth_of_coalition_with_node - worth_of_coalition)
-        return my
+            worth_of_coalition_with_node = coalition_to_worth[tuple(sorted(coalition + (node,)))]
+            term = prefactors[size_coalition] * (worth_of_coalition_with_node - worth_of_coalition)
+            if isinstance(term, (float, int, np.floating, np.integer)):
+                term = float(term)
+                t = total + term
+                if abs(total) >= abs(term):
+                    comp += (total - t) + term
+                else:
+                    comp += (term - t) + total
+                total = t
+            else:  # tensor / multi-output worth: plain accumulation
+                tensor_total = term if tensor_total is None else tensor_total + term
+        if tensor_total is not None:
+            return tensor_total
+        return total + comp
 
     def _enumerate_connected_subgraphs(
             self, max_subgraphs: int | None = None) -> tuple[list, list, list]:
@@ -727,6 +748,122 @@ class MyersonCalculator:
             return float(worth), True
         return np.asarray(worth, dtype=np.float64).reshape(-1), False
 
+    def _accumulate_skibski_scalar(self, n: int, sub_masks: list[int],
+                                   sub_tuples: list[tuple],
+                                   neighbour_masks: list[int],
+                                   worth_by_tuple: dict,
+                                   fact: list[int]) -> np.ndarray:
+        r"""Neumaier-compensated accumulation of the Skibski Alg. 4 weights
+        (scalar worths).
+
+        Each weight ``(|S|-1)!|N(S)|!/(|S|+|N(S)|)!`` is an ``int * int / int``
+        division and is therefore correctly rounded (<= 0.5 ulp) on its own. The
+        numerical risk is the *summation*: a node accumulates up to ``|C|``
+        signed terms (``~1e7`` on large molecules), positive for ``u in S`` and
+        negative for ``u in N(S)``, individually many orders of magnitude larger
+        than the ``O(v(N))`` result. Naive float64 accumulation loses
+        ``O(sqrt(|C|) * eps * max|term|``); Neumaier (Kahan-Babuska) compensation
+        tracks the low-order bits dropped by every ``+=`` so the running sum is
+        exact up to a single final rounding, at a cost of ~4 flops per bit.
+
+        Note that the accumulators are Python ``list``s rather than a numpy
+        array: element-wise numpy indexing is slower than native float
+        arithmetic in this scalar bit loop, so the compensation is effectively
+        free.
+        """
+        totals = [0.0] * n            # running sums
+        comps = [0.0] * n             # bits lost by the running sums
+        for mask, tup, nbr in zip(sub_masks, sub_tuples, neighbour_masks,
+                                  strict=True):
+            value = worth_by_tuple[tup]            # v(S)
+            if type(value) is not float:           # np scalar / 0-d tensor
+                value = float(value)
+            if value == 0.0:
+                continue                           # contributes nothing
+            s = len(tup)                           # |S|
+            t = nbr.bit_count()                    # |N(S)|
+            denom = fact[s + t]                    # (|S|+|N(S)|)!
+            # Positive weight for members of S (all of S before u, N(S) after u).
+            pos = fact[s - 1] * fact[t] / denom * value
+            m = mask                               # walk the bits of S
+            while m:
+                low = m & (-m)
+                i = low.bit_length() - 1
+                acc = totals[i]
+                tot = acc + pos
+                if abs(acc) >= abs(pos):           # Neumaier branch
+                    comps[i] += (acc - tot) + pos
+                else:
+                    comps[i] += (pos - tot) + acc
+                totals[i] = tot
+                m ^= low
+            if t:
+                # Negative weight for neighbours of S (adding u reconnects S).
+                neg = -(fact[s] * fact[t - 1] / denom) * value
+                c = nbr                            # walk the bits of N(S)
+                while c:
+                    low = c & (-c)
+                    i = low.bit_length() - 1
+                    acc = totals[i]
+                    tot = acc + neg
+                    if abs(acc) >= abs(neg):
+                        comps[i] += (acc - tot) + neg
+                    else:
+                        comps[i] += (neg - tot) + acc
+                    totals[i] = tot
+                    c ^= low
+        # Fold the compensation back in exactly once, at the end.
+        return (np.asarray(totals, dtype=np.float64)
+                + np.asarray(comps, dtype=np.float64))
+
+    def _accumulate_skibski_tensor(self, n: int, n_tasks: int,
+                                   sub_masks: list[int],
+                                   sub_tuples: list[tuple],
+                                   neighbour_masks: list[int],
+                                   worth_by_tuple: dict,
+                                   fact: list[int]) -> np.ndarray:
+        """Vector-valued (multi-output / classifier) counterpart of
+        :meth:`_accumulate_skibski_scalar`, with the same Neumaier compensation
+        applied element-wise per task.
+
+        The extra numpy temporaries are negligible here: this path is used by the
+        GNN explainers, where the model forward dominates the runtime by orders
+        of magnitude.
+        """
+        totals = np.zeros((n, n_tasks), dtype=np.float64)
+        comps = np.zeros((n, n_tasks), dtype=np.float64)
+
+        def _add(i: int, term: np.ndarray) -> None:
+            acc = totals[i]
+            tot = acc + term
+            comps[i] += np.where(np.abs(acc) >= np.abs(term),
+                                 (acc - tot) + term,
+                                 (term - tot) + acc)
+            totals[i] = tot
+
+        for mask, tup, nbr in zip(sub_masks, sub_tuples, neighbour_masks,
+                                  strict=True):
+            value, _ = self._coerce_worth(worth_by_tuple[tup])  # v(S)
+            if not value.any():
+                continue
+            s = len(tup)
+            t = nbr.bit_count()
+            denom = fact[s + t]
+            pos = (fact[s - 1] * fact[t] / denom) * value
+            m = mask
+            while m:
+                low = m & (-m)
+                _add(low.bit_length() - 1, pos)
+                m ^= low
+            if t:
+                neg = -(fact[s] * fact[t - 1] / denom) * value
+                c = nbr
+                while c:
+                    low = c & (-c)
+                    _add(low.bit_length() - 1, neg)
+                    c ^= low
+        return totals + comps
+
     def _calculate_all_myerson_values_connected_enum(
             self, max_subgraphs: int | None = None) -> np.ndarray:
         """Exact Myerson values via connected-subgraph enumeration (Skibski et
@@ -783,37 +920,21 @@ class MyersonCalculator:
 
         # Decide scalar vs tensor (multi-output) accumulation from a sample worth.
         sample = next(iter(worth_by_tuple.values())) if worth_by_tuple else 0.0
-        _, scalar = self._coerce_worth(sample)
-        if scalar:
-            mv = np.zeros(n, dtype=np.float64)
-        else:
-            n_tasks = self._coerce_worth(sample)[0].shape[0]
-            mv = np.zeros((n, n_tasks), dtype=np.float64)
+        sample_value, scalar = self._coerce_worth(sample)
 
         fact = [math.factorial(k) for k in range(n + 1)]
         # Accumulate Skibski Alg. 4 lines 19-22: one weighted worth per subgraph.
-        for mask, tup, nbr in zip(sub_masks, sub_tuples, neighbour_masks, strict=True):
-            value, _ = self._coerce_worth(worth_by_tuple[tup])  # v(S)
-            if scalar and value == 0.0:
-                continue                       # contributes nothing to any node
-            s = len(tup)                       # |S|
-            t = nbr.bit_count()                # |N(S)|
-            denom = fact[s + t]                # (|S|+|N(S)|)!
-            # Positive weight for members of S (all of S before u, N(S) after u).
-            pos = fact[s - 1] * fact[t] / denom
-            m = mask                           # walk the bits (vertices) of S
-            while m:
-                low = m & (-m)                 # lowest set bit
-                mv[low.bit_length() - 1] += pos * value
-                m ^= low                       # clear it, advance
-            if t:
-                # Negative weight for neighbours of S (adding u reconnects S).
-                neg = fact[s] * fact[t - 1] / denom
-                c = nbr                        # walk the bits (vertices) of N(S)
-                while c:
-                    low = c & (-c)
-                    mv[low.bit_length() - 1] -= neg * value
-                    c ^= low
+        # Both accumulators are Neumaier-compensated (see the helpers above):
+        # the individual weights are correctly rounded, but the *sum* is not --
+        # up to |C| ~ 1e7 signed terms per node, each potentially orders of
+        # magnitude larger than the O(v(N)) result, cancel against each other.
+        if scalar:
+            mv = self._accumulate_skibski_scalar(
+                n, sub_masks, sub_tuples, neighbour_masks, worth_by_tuple, fact)
+        else:
+            mv = self._accumulate_skibski_tensor(
+                n, sample_value.shape[0], sub_masks, sub_tuples,
+                neighbour_masks, worth_by_tuple, fact)
 
         # Reorder from internal vertex-index order into grand_coalition order.
         order = [label_to_index[label] for label in self.grand_coalition]
